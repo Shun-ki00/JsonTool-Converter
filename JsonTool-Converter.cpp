@@ -2,49 +2,39 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
+
 void ShowUsage()
 {
-    std::cout << "Usage: Converter.exe <input.json> <format>\n";
-    std::cout << "Supported formats: msgpack, cbor, bson\n";
+    std::cout << "Usage: Converter.exe <input.json> <format>" << std::endl;
+    std::cout << "Supported formats: msgpack, cbor, bson" << std::endl;
 }
 
-int main(int argc, char* argv[])
+bool ConvertJsonToBinary(const std::filesystem::path& inputPath, const std::string& format, std::filesystem::path& outputPath)
 {
-    if (argc < 3)
-    {
-        ShowUsage();
-        return 1;
-    }
-
-    const std::string inputPath = argv[1];
-    const std::string format = argv[2];
-
-    // 入力ファイル読み込み
     std::ifstream inputFile(inputPath);
+
+    // ファイルが開けない場合
     if (!inputFile)
     {
-        std::cerr << "Failed to open input file: " << inputPath << '\n';
-        return 1;
+        std::cerr << "ファイルが開けません" << std::endl;
+        return false;
     }
 
     json j;
-    try
-    {
-        inputFile >> j;
-    }
+    try { inputFile >> j; }
     catch (const std::exception& e)
     {
-        std::cerr << "JSON parse error: " << e.what() << '\n';
-        return 1;
+        std::cerr << "JSONに変換できませんでした：" << std::endl;
+        return false;
     }
 
+    // 各指定のフォーマットで変換を行う
     std::vector<uint8_t> binary;
-
-    // フォーマットに応じたバイナリ変換
     if (format == "msgpack")
         binary = json::to_msgpack(j);
     else if (format == "cbor")
@@ -53,19 +43,56 @@ int main(int argc, char* argv[])
         binary = json::to_bson(j);
     else
     {
-        std::cerr << "Unsupported format: " << format << '\n';
+        std::cerr << "このフォーマットはサポートされていません :" << format << '\n';
+        return false;
+    }
+
+    // 指定のフォルダに保存する
+    std::filesystem::path outputFile = outputPath / (inputPath.stem().string() + "." + format);
+    std::ofstream output(outputFile, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(binary.data()), binary.size());
+
+    // 変換、出力が成功したログ
+    std::cout << "Converted: " << inputPath.filename() << " -> " << outputFile.filename() << '\n';
+
+    return true;
+}
+
+
+int main(int argc, char* argv[])
+{
+    if (argc < 4)
+    {
         ShowUsage();
         return 1;
     }
 
-    // 出力ファイル名決定
-    std::string outputPath = inputPath.substr(0, inputPath.find_last_of('.')) + "." + format;
 
-    // 書き出し
-    std::ofstream outputFile(outputPath, std::ios::binary);
-    outputFile.write(reinterpret_cast<const char*>(binary.data()), binary.size());
+    // 入力された値
+    const std::filesystem::path inputRootPath = argv[1];
+    const std::string format = argv[2];
+          std::filesystem::path outputPath = argv[3];
 
-    std::cout << "Converted to: " << outputPath << '\n';
+    // ファイルパスの確認
+    if (!std::filesystem::is_regular_file(inputRootPath) && !std::filesystem::is_directory(inputRootPath))
+    {
+        // エラー表示
+        std::cerr << "パスが存在しません :" << inputRootPath << std::endl;
+    }
+
+    // ファイルの作成
+    std::filesystem::create_directories(outputPath);
+
+    // 変換を行う
+    for (const auto& entry : std::filesystem::directory_iterator(inputRootPath))
+    {
+        // 拡張子が「.json」の場合変換を行う
+        if (entry.is_regular_file() && entry.path().extension() == ".json")
+        {
+            // 変換を行う
+            ConvertJsonToBinary(entry.path(), format, outputPath);
+        }
+    }
 
     return 0;
 }
